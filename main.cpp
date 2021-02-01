@@ -315,7 +315,7 @@ void box1cuts(lpProblem& prob)
                 }
 
                 vector<int> p ; 
-                if(qubo_solver(p, beta+1, n-3+beta-qsize) == -1) continue ; 
+                if(qubo_solver(p) == -1) continue ; 
 
                 assert(qsize >= beta+1 && qsize <= n-3) ; 
                 assert(qsize+p.size() <= n-3+beta) ; 
@@ -385,7 +385,7 @@ void box1cuts(lpProblem& prob)
                 }
 
                 vector<int> p ; 
-                if(qubo_solver(p, beta+1, n-3+beta-qsize) == -1) continue ; 
+                if(qubo_solver(p) == -1) continue ; 
 
                 assert(qsize >= beta+1 && qsize <= n-3) ; 
                 assert(qsize+p.size() <= n-3+beta) ; 

@@ -15,11 +15,10 @@ using namespace std ;
 
 /* Declaring Global Variables */
 GRBEnv env = GRBEnv() ; 
-static const int n = 20 ; 
+static const int n = 14 ; 
 double coeff[n][n] ; 
 static const double epsilon = 0.00001; 
-static double globalLowerBound ; 
-static double globalUpperBound = DBL_MAX; 
+static double globalUpperBound = 756980; 
 int a[n][n] ; 
 int b[n][n] ; 
 

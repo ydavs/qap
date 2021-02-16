@@ -1,16 +1,24 @@
-# Copyright 2020, Gurobi Optimization, LLC
-
 PLATFORM = linux64
+
+#Choose correct path when running on HPC 
 TWOUP    = /opt/gurobi/gurobi911/linux64
+#TWOUP = /opt/apps/gurobi903/gurobi903/linux64
+
 INC      = $(TWOUP)/include/
 CC       = gcc
 CPP      = g++
 CARGS    = -m64 -g
+
+#Update CLIB and CPPLIB when running on HPC 
 CLIB     = -L$(TWOUP)/lib -lgurobi91
 CPPLIB   = -L$(TWOUP)/lib -lgurobi_c++ -lgurobi91
+#CLIB     = -L$(TWOUP)/lib -lgurobi90
+#CPPLIB   = -L$(TWOUP)/lib -lgurobi_c++ -lgurobi90
+
 HELPERDIR = helper
 
 all: 
+	# Comment out make model when running on HPC 
 	make model 
 	make main
 

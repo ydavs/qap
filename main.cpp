@@ -87,7 +87,7 @@ lpProblem initialize2(GRBModel& model)
 /* Initializations */
 
 /* QUBO Solver */
-int qubo_solver(vector<int> &tmp)
+int qubo_solver(vector<int> &tmp, int lower_bound)
 {
   try
   {
@@ -122,7 +122,10 @@ int qubo_solver(vector<int> &tmp)
     }
 
     model.setObjective(objExp, GRB_MAXIMIZE) ; 
-    
+    cons.addTerms(rngcoeff, var, n) ; 
+    model.addConstr(cons, GRB_GREATER_EQUAL, lower_bound) ; 
+
+
     model.optimize() ; 
 
     int optimstatus = model.get(GRB_IntAttr_Status) ; 
@@ -202,6 +205,17 @@ int lpRelaxation(lpProblem& prob)
             /* Storing values of variable for optimal value */
             GRBVar* vars = prob.model.getVars() ; 
             for(int i=0;i<n*n*n*n;i++) prob.vars[i] = vars[i].get(GRB_DoubleAttr_X) ;
+
+            /* Removing all loose constraints  */
+            GRBConstr* constrs = prob.model.getConstrs() ; 
+            //cout << "Constraint Number bf : " << prob.model.get(GRB_IntAttr_NumConstrs) << endl; 
+
+            for(int i=0;i<prob.model.get(GRB_IntAttr_NumConstrs);i++)
+                if(constrs[i].get(GRB_DoubleAttr_Slack) != 0 ) prob.model.remove(constrs[i]) ;
+            prob.model.update() ; 
+            
+            //cout << "Constraint Number af : " << prob.model.get(GRB_IntAttr_NumConstrs) << endl; 
+
         } else if(optimstatus == GRB_INFEASIBLE)
         {
             cout << "Model is infeasible" << endl ; 
@@ -278,13 +292,13 @@ void box1cuts(lpProblem& prob)
     {
         cout << "Iteration : " << it << endl ; 
         int cuts = 0 ; 
-        int cntlimit = 1000 ; 
+        int cntlimit = 2000 ; 
 
         for(int beta=2;beta<4;beta++)
         {
             for(int ix=0;ix<cntlimit;ix++)
             {
-                int qsize = n/2 +2 -it ;
+                int qsize = n/2 + 1 -it ;
                 //int qsize = qdis(gen) ;  
                 set<int> q ;
 
@@ -315,8 +329,9 @@ void box1cuts(lpProblem& prob)
                 }
 
                 vector<int> p ; 
-                if(qubo_solver(p) == -1) continue ; 
-
+                if(qubo_solver(p, beta+1) == -1) continue ; 
+                if(qsize + p.size() > n-3+beta || qsize > n-1 ) continue ; 
+                
                 assert(qsize >= beta+1 && qsize <= n-3) ; 
                 assert(qsize+p.size() <= n-3+beta) ; 
 
@@ -354,7 +369,7 @@ void box1cuts(lpProblem& prob)
 
             for(int ix=0;ix<cntlimit;ix++)
             {
-                int qsize = n/2 + 2 - it; 
+                int qsize = n/2 + 1 - it; 
                 //int qsize = qdis(gen) ; 
                 set<int> q ;
 
@@ -382,10 +397,11 @@ void box1cuts(lpProblem& prob)
                         }
                         coeff[a][k] = -0.8 + fifth - first ; 
                     }
-                }
+                }   
 
                 vector<int> p ; 
-                if(qubo_solver(p) == -1) continue ; 
+                if(qubo_solver(p, beta+1) == -1) continue ; 
+                if(qsize + p.size() > n-3+beta || qsize > n-1 ) continue ; 
 
                 assert(qsize >= beta+1 && qsize <= n-3) ; 
                 assert(qsize+p.size() <= n-3+beta) ; 
@@ -434,7 +450,7 @@ void qap2(lpProblem& prob)
     int cuts = 0 ; 
     GRBVar* vars = prob.model.getVars() ; 
 
-    for(int m=3;m<=n;m++){
+    for(int m=3;m<=3;m++){
     for(int k=1;k<=n;k++)
     {
         for(int l=1;l<=n;l++)
@@ -447,7 +463,7 @@ void qap2(lpProblem& prob)
 
             sort(lst.begin(), lst.end(), greater<>()) ;
 
-            bool itaken[n+1], jtaken[n+1] ; 
+            /* bool itaken[n+1], jtaken[n+1] ; 
 
             for(int i=0;i<=n;i++) itaken[i] = 0, jtaken[i] = 0 ; 
             itaken[k] = 1, jtaken[l] = 1 ; 
@@ -462,9 +478,82 @@ void qap2(lpProblem& prob)
                     ivec.push_back(i.second.first) ; 
                     jvec.push_back(i.second.second) ; 
                 }
-            }  
+            }   */
 
-            GRBLinExpr exp ; 
+            for(int a=0;a<n;a++)
+            {
+                if(lst[a].second.first ==k || lst[a].second.second ==l ) continue ; 
+                for(int b=0;b<n;b++)
+                {
+                    if(lst[b].second.first ==k || lst[b].second.second ==l || lst[a].second.first == lst[b].second.first || lst[a].second.second == lst[b].second.second) continue ; 
+                    for(int c=0;c<n;c++)
+                    {
+                        if(lst[c].second.first ==k || lst[c].second.second ==l || lst[c].second.first == lst[b].second.first || lst[c].second.second == lst[b].second.second || lst[a].second.first == lst[c].second.first || lst[a].second.second == lst[c].second.second) continue ; 
+
+                        vector<int> ivec, jvec ; 
+                        ivec.push_back(lst[a].second.first) ; 
+                        ivec.push_back(lst[b].second.first) ;
+                        ivec.push_back(lst[c].second.first) ;
+
+                        jvec.push_back(lst[a].second.second) ; 
+                        jvec.push_back(lst[b].second.second) ;
+                        jvec.push_back(lst[c].second.second) ;
+
+                        GRBLinExpr exp ; 
+                        double first = 0.0, third = 0.0 ; 
+                        double tmp1 =1.0, tmp2 = -1.0 ; 
+                        for(int i=0;i<m;i++)
+                        { 
+                            first += prob.vars[oneIndex(ivec[i], jvec[i], k,l)] ;
+                            exp.addTerms(&tmp1, &vars[oneIndex(ivec[i], jvec[i], k, l)], 1) ;  
+                            for(int j=0;j<i;j++){ 
+                                third += prob.vars[oneIndex(ivec[j], jvec[j], ivec[i], jvec[i])] ; 
+                                exp.addTerms(&tmp2, &vars[oneIndex(ivec[j], jvec[j], ivec[i], jvec[i])], 1) ; 
+                            }
+                        }
+
+                        double sum = first - prob.vars[oneIndex(k, l, k,l)] - third ; 
+                        exp.addTerms(&tmp2, &vars[oneIndex(k,l,k,l)], 1) ; 
+
+                        if(sum > 0.05)
+                        {
+                            prob.model.addConstr(exp, GRB_LESS_EQUAL, 0.0) ;
+                            //cout << sum << endl ; 
+                            cuts++ ;  
+                        }
+                    }
+
+                    vector<int> ivec, jvec ; 
+                    ivec.push_back(lst[a].second.first) ; 
+                    ivec.push_back(lst[b].second.first) ; 
+
+                    jvec.push_back(lst[a].second.second) ; 
+                    jvec.push_back(lst[b].second.second) ;
+
+                    GRBLinExpr exp ; 
+                    double val = 0.0, tmp1=1.0, tmp2=-1.0 ; 
+                    for(int i=0;i<2;i++)
+                    {
+                        val += prob.vars[oneIndex(ivec[i], jvec[i], k, l)] ; 
+                        exp.addTerms(&tmp1, &vars[oneIndex(ivec[i], jvec[i], k, l)], 1) ; 
+                    } 
+
+                    val+= prob.vars[oneIndex(ivec[0], jvec[1], k, l)] - prob.vars[oneIndex(k, l, k, l)] - prob.vars[oneIndex(ivec[1], jvec[1], ivec[0], jvec[0])] ; 
+                    exp.addTerms(&tmp1, &vars[oneIndex(ivec[0], jvec[1], k, l)], 1) ; 
+                    exp.addTerms(&tmp2, &vars[oneIndex(k, l, k, l)], 1) ; 
+                    exp.addTerms(&tmp2, &vars[oneIndex(ivec[1], jvec[1], ivec[0], jvec[0])], 1) ; 
+                    
+                    if(val > 0.05)
+                    {
+                        prob.model.addConstr(exp, GRB_LESS_EQUAL, 0) ; 
+                        cuts++ ; 
+                    }
+
+
+                }
+            }
+
+            /* GRBLinExpr exp ; 
             double first = 0.0, third = 0.0 ; 
             double tmp1 =1.0, tmp2 = -1.0 ; 
             for(int i=0;i<m;i++)
@@ -483,9 +572,15 @@ void qap2(lpProblem& prob)
             if(sum > 0.05)
             {
                 prob.model.addConstr(exp, GRB_LESS_EQUAL, 0.0) ;
+                cout << "K: " << k << " L: " << l << " " ; 
+                cout << "I: "  ; 
+                for(int i : ivec) cout << i << " " ;
+                cout << "J: " ;  
+                for(int j : jvec) cout << j << " " ;
+                cout << sum << endl << endl  ;  
                 //cout << sum << endl ; 
                 cuts++ ;  
-            }
+            } */
         }
     } }
 
@@ -499,48 +594,49 @@ void branchAndBound(lpProblem& prob)
 {
     queue<lpProblem> q  ; 
     q.push(prob) ; 
+    double expected_gap ; 
 
     int it = 0 ;  
     while(!q.empty())
     {
         if(it >0 ) break ; 
         it++ ; 
-        cout << it << " Global Lower Bound : " << globalLowerBound << " Global Upper Bound : " << globalUpperBound << endl ;  
+        cout << it << " Global Upper Bound : " << globalUpperBound << endl ;  
 
         if(lpRelaxation(q.front())) {q.pop(); continue;} 
         findUpperBound(q.front()) ; 
 
-        cout << q.front().lowerBound << " " << q.front().upperBound << endl ; 
+        cout << "Before adding cuts : " << q.front().lowerBound << " " << q.front().upperBound << endl ; 
 
-        globalUpperBound = min(globalUpperBound, q.front().upperBound)  ; 
-        if(double_equal(q.front().lowerBound, q.front().upperBound) || q.front().lowerBound >= globalUpperBound)
-        {
-            //globalLowerBound = max(q.front().lowerBound, globalLowerBound) ; 
-            q.pop() ; 
-            continue ; 
+
+        if(it > 0 ) break;
+
+        globalUpperBound = min(globalUpperBound, q.front().upperBound)  ;
+        
+        // Checking before adding cuts  
+        if(q.front().lowerBound >= globalUpperBound || double_equal(q.front().lowerBound, q.front().upperBound)){ q.pop() ; continue ; }
+
+        expected_gap = q.front().lowerBound/globalUpperBound ; 
+        //  Cutting 
+        for(int i=1;i<=4;i++){
+            if(i & 1 && expected_gap < 0.975) box1cuts(q.front()) ; 
+            else qap2(q.front()) ;  
+
+            // Re-solving after adding Cuts 
+            lpRelaxation(q.front()) ; 
+            cout << q.front().lowerBound << endl ; 
+            findUpperBound(q.front()) ; 
+
+            globalUpperBound = min(globalUpperBound, q.front().upperBound)  ;
         }
 
-        /*  Cutting Procedures  */
-        qap2(q.front()) ;
-        //box1cuts(q.front()) ;  
+        // Checking again after adding cuts  
+        if(q.front().lowerBound >= globalUpperBound || double_equal(q.front().lowerBound, q.front().upperBound)){ q.pop() ; continue ; }
 
-        /* Resolving after adding Cuts */
-        lpRelaxation(q.front()) ; 
-        findUpperBound(q.front()) ; 
+        cout << "After adding cuts : " << q.front().lowerBound << " " << q.front().upperBound << endl ; 
+         
 
-        globalUpperBound = min(globalUpperBound, q.front().upperBound)  ; 
-        if(q.front().lowerBound >= globalUpperBound){ q.pop() ; continue ; } 
-        if(double_equal(q.front().lowerBound, q.front().upperBound))
-        {
-            //globalLowerBound = max(q.front().lowerBound, globalLowerBound) ; 
-            q.pop() ; 
-            continue ; 
-        }
-
-        cout << "Adding Box1 Cuts(Trivial Implementation)" << q.front().lowerBound << " " << q.front().upperBound << endl ; 
-
-
-        /* Branching on max value found on diagonal */
+        // Branching on max value found on diagonal 
         double val = 0 ; 
         pair<int, int> p ;  
         for(int i=1;i<=n;i++)
@@ -556,6 +652,7 @@ void branchAndBound(lpProblem& prob)
         }
 
         cout << "Node for branching is : " << p.first << " " << p.second  << " " << val << endl ; 
+        if(p.first==0 || p.second==0){q.pop(); continue;}
 
         /* Adding branching node's binary values to the model */
         for(int i=1;i>=0;i--)

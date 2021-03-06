@@ -7,7 +7,7 @@ TWOUP    = /opt/gurobi/gurobi911/linux64
 INC      = $(TWOUP)/include/
 CC       = gcc
 CPP      = g++
-CARGS    = -m64 -g
+CARGS    = -m64 -g -ftree-vectorize -O3 -ftree-vectorizer-verbose=2 -floop-parallelize-all -ftree-parallelize-loops=4
 
 #Update CLIB and CPPLIB when running on HPC 
 CLIB     = -L$(TWOUP)/lib -lgurobi91

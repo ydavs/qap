@@ -86,100 +86,6 @@ lpProblem initialize2(GRBModel& model)
 
 /* Initializations */
 
-/* QUBO Solver */
-int qubo_solver(vector<int> &tmp, int lower_bound)
-{
-  try
-  {
-    GRBModel model = GRBModel(env) ; 
-    GRBQuadExpr objExp ; 
-    GRBLinExpr cons ; 
-    double rngcoeff[n] ;
-    GRBVar var[n] ;   
-
-    //cout << "hel" << endl; 
-    model.set(GRB_IntParam_OutputFlag, 0) ; 
-
-    /*  for(int i=0;i<n;i++)
-    {
-      for(int j=0;j<n;j++) cout << coeff[i][j] << " " ; 
-      cout << endl ; 
-    }  */
-
-    for(int i=0;i<n;i++)
-    {
-      var[i] = model.addVar(0.0, 1.0, GRB_INFINITY, GRB_BINARY, to_string(11)) ;
-      rngcoeff[i] = 1 ;  
-    }
-    
-    for(int i=0;i<n;i++)
-    {
-      for(int j=0;j<n;j++)
-      {
-        if(i >= j) continue ; 
-        objExp.addTerm(coeff[i][j], var[i], var[j]) ; 
-      }
-    }
-
-    model.setObjective(objExp, GRB_MAXIMIZE) ; 
-    cons.addTerms(rngcoeff, var, n) ; 
-    model.addConstr(cons, GRB_GREATER_EQUAL, lower_bound) ; 
-
-
-    model.optimize() ; 
-
-    int optimstatus = model.get(GRB_IntAttr_Status) ; 
-
-    if(optimstatus == GRB_INF_OR_UNBD)
-    {
-      model.set(GRB_IntParam_Presolve, 0);
-      model.optimize();
-      optimstatus = model.get(GRB_IntAttr_Status);
-    }
-
-    if (optimstatus == GRB_OPTIMAL) 
-    {
-      //double objval = model.get(GRB_DoubleAttr_ObjVal);
-      //cout << "Optimal objective: " << objval << endl;
-
-      for(int i=0;i<n;i++)
-      {
-        if(var[i].get(GRB_DoubleAttr_X)) tmp.push_back(i+1) ; 
-      }
-    }
-    else if (optimstatus == GRB_INFEASIBLE) 
-    {
-      cout << "Model is infeasible" << endl;
-
-      // compute and write out IIS
-      model.computeIIS();
-      model.write("model.ilp");
-
-      return -1 ; 
-    }
-    else if (optimstatus == GRB_UNBOUNDED) 
-    {
-      cout << "Model is unbounded" << endl;
-    } 
-    else 
-    {
-      cout << "Optimization was stopped with status = "
-           << optimstatus << endl;
-    }
-  }
-  catch(GRBException e) 
-  {
-    cout << "Error code = " << e.getErrorCode() << endl;
-    cout << e.getMessage() << endl;
-  } 
-  catch (...) 
-  {
-    cout << "Error during optimization" << endl;
-  }
-
-  return 0 ; 
-}
-
 /* Linear Relaxation */
 int lpRelaxation(lpProblem& prob)
 {
@@ -215,7 +121,7 @@ int lpRelaxation(lpProblem& prob)
             prob.model.update() ; 
             
             //cout << "Constraint Number af : " << prob.model.get(GRB_IntAttr_NumConstrs) << endl; 
-
+            delete vars, constrs ; 
         } else if(optimstatus == GRB_INFEASIBLE)
         {
             cout << "Model is infeasible" << endl ; 
@@ -277,6 +183,128 @@ double findUpperBound(lpProblem& prob)
     return prob.upperBound ; 
 }
 
+/* tabu Search */
+double fitness(lpProblem &prob, vector<int> &p, vector<int> &q, int cut, int beta)
+{
+     /* 
+        Cut = 0 -> tabu search for Box1 inequalities
+        Cut = 1 -> tabu search for QAP2 inequalities
+     */
+    if(!cut)
+    {
+        GRBVar* vars = prob.model.getVars() ; 
+        double val=0.0 ; 
+
+        for(int i : p)
+        {
+            for(int j :q)
+            {
+                val+=(beta-1)*prob.vars[oneIndex(i, j,i,j)] ; 
+
+                for(int k : p)
+                {
+                    if(i>=k) continue ; 
+                    for(int l :q)
+                    {
+                        val-=prob.vars[oneIndex(i,j,k,l)] ; 
+                    }
+                }
+            }
+        }
+        delete vars ; 
+        return val ;
+    }
+    else
+    {
+        GRBVar* vars = prob.model.getVars() ; 
+        double val=0.0 ; 
+
+        assert(q.size() == p.size()) ; 
+        int k = p[p.size()-1] ; 
+        int l = q[p.size()-1] ; 
+
+        val -= prob.vars[oneIndex(k,l,k,l)] ; 
+        for(int i=0;i<p.size()-1;i++)
+        {
+            val+= prob.vars[oneIndex(p[i], q[i], k,l)] ; 
+            for(int j=0;j<p.size()-1;j++)
+            {
+                if(j<=i) continue ; 
+                val-= prob.vars[oneIndex(p[i], q[i], p[j], q[j])] ; 
+            }
+        }
+
+        delete vars ; 
+        return val ; 
+    } 
+}
+
+void get_neighbours(list<vector<int>> &que, vector<int> &p)
+{
+    bool bit_array[n+1] ; 
+    for(int i=0;i<=n;i++) bit_array[i] = 0 ; 
+    for(int i : p ) bit_array[i] = 1;  
+    for(int i=0;i<p.size();i++)
+    {
+        vector<int> tmp(p.size()) ; 
+        for(int j=0;j<p.size();j++)
+        {
+            if(j == i) continue ;
+            tmp[j] = p[j] ; 
+        }
+
+        for(int j=1;j<=n;j++)
+        {
+            if(!bit_array[j]) tmp[i] = j ; 
+            else continue ;
+            que.push_back(tmp) ; 
+        }
+    }
+}
+
+bool check_list(list<vector<int>> &lst, vector<int> &vec)
+{
+    for(vector<int> candidate : lst)
+    {
+        assert(candidate.size() == vec.size()) ; 
+        bool chk = 1 ; 
+        for(int i=0;i<vec.size();i++)
+        {
+            if(candidate[i] != vec[i]) chk = 0 ; 
+        }
+        if(chk==1) return 1 ; 
+    }
+    return 0 ; 
+}
+
+void tabu_search(lpProblem &prob, vector<int> &p, vector<int> &q,  int psize, int cut, int beta)
+{  
+    vector<int> best = p ; 
+    vector<int> best_candidate = p ;
+    list<vector<int>> tabulist ; 
+    tabulist.push_back(p) ; 
+    int it = 0, max_tabu_size=10 ; 
+
+    while(it < 20) 
+    {
+        it++ ; 
+        list<vector<int>> neighbours ;  
+        get_neighbours(neighbours, best_candidate) ; 
+        best_candidate = neighbours.front() ;
+
+        for(vector<int> candidate : neighbours)
+        {
+            if(!check_list(tabulist, candidate) && (fitness(prob,candidate, q, cut, beta) > fitness(prob, best_candidate, q, cut, beta))) best_candidate = candidate ;
+            if(fitness(prob, best_candidate, q, cut, beta) > fitness(prob, best, q, cut, beta)) best = best_candidate ; 
+        }
+        tabulist.push_back(best_candidate) ; 
+        if(tabulist.size() > max_tabu_size) tabulist.pop_front() ; 
+    }
+    p = best ;
+    return ;
+}
+
+
 /* Cutting Procedures */
 /* Kaibel Box 1 Cuts */
 void box1cuts(lpProblem& prob)
@@ -284,310 +312,124 @@ void box1cuts(lpProblem& prob)
     random_device rd ; 
     mt19937 gen(rd()) ; 
     uniform_int_distribution<> distrib(1, n) ;
+    uniform_int_distribution<> qdis(3, n-5) ; 
 
     GRBVar* vars = prob.model.getVars() ; 
-    int cuts = 0 ; 
+    int cuts = 0, cnt_limit = 100, beta=2 ; 
 
-    for(int it=1;it<=2;it++)
+    for(int i=0;i<cnt_limit;i++)
     {
-        cout << "Iteration : " << it << endl ; 
-        int cuts = 0 ; 
-        int cntlimit = 2000 ; 
+        vector<int> p, q ; 
+        vector<int> v(n) ;
+        for(int i=0;i<n;i++) v[i] = i+1 ; 
 
-        for(int beta=2;beta<4;beta++)
+        /* Initial random q  */
+        shuffle(v.begin(), v.end(), rd) ; 
+        int qsize = qdis(gen) ; 
+        for(int i=0;i<qsize;i++) q.push_back(v[i]) ;
+
+        /* Initial random p */
+        shuffle(v.begin(), v.end(), rd) ; 
+        int psize = qdis(gen) ;  /* For now, make it a constant */
+        for(int i=0;i<psize;i++) p.push_back(v[i]) ; 
+
+        if(psize + qsize > n-3+beta){i--; continue ; }
+        /* cout << "P " ; 
+        for(int i : p) cout << i << " " ; 
+        cout << endl ;  */ 
+        /* tabu search for approximately optimal solution */
+        if(fitness(prob, p, q, 0, beta) < 0.6) { i--; continue ;}
+        //if(beta==3 && fitness(prob, p, q, 0, beta) < 2.5) {i--; continue; }
+        cout << "Before " << fitness(prob, p, q, 0, beta) << endl  ; 
+        tabu_search(prob, p,q, psize, 0, beta) ; 
+        cout << "After " << fitness(prob, p, q, 0, beta) << endl << endl ; 
+        /* Check limit  */
+        if(fitness(prob, p, q, 0, beta) > (double) (beta)*(beta-1)/2)
         {
-            for(int ix=0;ix<cntlimit;ix++)
+            cuts++ ; 
+            GRBLinExpr exp ; 
+            double pos=1.0, neg=-1.0 ; 
+            for(int i : p)
             {
-                int qsize = n/2 + 1 -it ;
-                //int qsize = qdis(gen) ;  
-                set<int> q ;
-
-                for(int i=0;i<qsize;i++)
+                for(int j : q)
                 {
-                    int ins = distrib(gen) ;
-                    while(q.find(ins)!=q.end() && q.size()) ins = distrib(gen) ; 
-                    q.insert(ins) ;
-                }
+                    exp.addTerms(&pos, &vars[oneIndex(i,j,i,j)], 1) ; 
 
-                for(int a=0;a<n;a++)
-                {
-                    double fifth = 0.0 ; 
-                    for(int i : q) fifth += (beta-1)*prob.vars[oneIndex(a+1, i, a+1, i)] ; 
-
-                    for(int k=0;k<n;k++)
+                    for(int k : p)
                     {
-                        double first = 0.0 ; 
-
-                        if(a==k){coeff[a][k] =  -10 ; continue ;}
-
-                        for(int i :q)
-                        {
-                            for(int j : q) first+= prob.vars[oneIndex(a+1,i,k+1,j)] ; 
-                        }
-                        coeff[a][k] = -0.8 + fifth - first ; 
+                        if(i>=k) continue ; 
+                        for(int l : q) exp.addTerms(&neg, &vars[oneIndex(i,j,k,l)], 1) ; 
                     }
-                }
-
-                vector<int> p ; 
-                if(qubo_solver(p, beta+1) == -1) continue ; 
-                if(qsize + p.size() > n-3+beta || qsize > n-1 ) continue ; 
-                
-                assert(qsize >= beta+1 && qsize <= n-3) ; 
-                assert(qsize+p.size() <= n-3+beta) ; 
-
-                GRBLinExpr exp  ;
-                double val =0.0, pos = 1.0, neg = -1.0 ; 
-
-                for(int i : p)
-                {
-                    for(int j :q)
-                    {
-                        val+=(beta-1)*prob.vars[oneIndex(i,j,i,j)] ; 
-                        double tmpVal = beta-1;
-                        exp.addTerms(&tmpVal, &vars[oneIndex(i,j,i,j)], 1) ; 
-
-                        for(int k : p)
-                        {
-                            if(i>=k) continue ; 
-
-                            for(int l : q)
-                            {
-                                val-= prob.vars[oneIndex(i,j,k,l)] ; 
-                                exp.addTerms(&neg, &vars[oneIndex(i,j,k,l)], 1) ; 
-                            }
-                        } 
-                    }
-                }
-
-                double limit = (double) (beta*beta - beta)/2 ; 
-                if(val > limit + 0.05)
-                {
-                    prob.model.addConstr(exp, GRB_LESS_EQUAL, limit) ; 
-                    cuts++ ; 
                 }
             }
 
-            for(int ix=0;ix<cntlimit;ix++)
-            {
-                int qsize = n/2 + 1 - it; 
-                //int qsize = qdis(gen) ; 
-                set<int> q ;
-
-                for(int i=0;i<qsize;i++)
-                {
-                    int ins = distrib(gen) ;
-                    while(q.find(ins)!=q.end() && q.size()) ins = distrib(gen) ; 
-                    q.insert(ins) ;
-                }
-
-                for(int a=0;a<n;a++)
-                {
-                    double fifth = 0.0 ; 
-                    for(int i : q) fifth += (beta-1)*prob.vars[oneIndex(i, a+1, i, a+1)] ; 
-
-                    for(int k=0;k<n;k++)
-                    {
-                        double first = 0.0 ; 
-
-                        if(a==k){coeff[a][k] =  -10 ; continue ;}
-
-                        for(int i :q)
-                        {
-                            for(int j : q) first+= prob.vars[oneIndex(i,a+1,j,k+1)] ; 
-                        }
-                        coeff[a][k] = -0.8 + fifth - first ; 
-                    }
-                }   
-
-                vector<int> p ; 
-                if(qubo_solver(p, beta+1) == -1) continue ; 
-                if(qsize + p.size() > n-3+beta || qsize > n-1 ) continue ; 
-
-                assert(qsize >= beta+1 && qsize <= n-3) ; 
-                assert(qsize+p.size() <= n-3+beta) ; 
-
-                GRBLinExpr exp  ;
-                double val =0.0, pos = 1.0, neg = -1.0 ; 
-
-                for(int i : p)
-                {
-                    for(int j :q)
-                    {
-                        val+=(beta-1)*prob.vars[oneIndex(j,i,j,i)] ; 
-                        double tmpVal = beta-1;
-                        exp.addTerms(&tmpVal, &vars[oneIndex(j,i,j,i)], 1) ; 
-
-                        for(int k : p)
-                        {
-                            if(i>=k) continue ; 
-
-                            for(int l : q)
-                            {
-                                val-= prob.vars[oneIndex(j,i,l,k)] ; 
-                                exp.addTerms(&neg, &vars[oneIndex(j,i,l,k)], 1) ; 
-                            }
-                        } 
-                    }
-                }
-
-                double limit = (double) (beta*beta - beta)/2 ; 
-                if(val > limit + 0.05)
-                {
-                    prob.model.addConstr(exp, GRB_LESS_EQUAL, limit) ; 
-                    cuts++ ; 
-                }
-            }
-        }
-
-        cout << "Cuts added : " << cuts << endl ; 
+            prob.model.addConstr(exp, GRB_LESS_EQUAL, 1) ; 
+        } 
     }
+        cout << cuts << endl ; 
+    delete vars ; 
 }
+
 
 /* QAP2 Cuts */
 void qap2(lpProblem& prob)
 {
-    int m = 3 ;
-    int cuts = 0 ; 
+    random_device rd ; 
+    mt19937 gen(rd()) ; 
+    uniform_int_distribution<> size_dis(3, n-2) ; 
+    
+    int cuts=0, cnt_limit=2000 ; 
     GRBVar* vars = prob.model.getVars() ; 
 
-    for(int m=3;m<=3;m++){
-    for(int k=1;k<=n;k++)
+    for(int i=0;i<cnt_limit;i++)
     {
-        for(int l=1;l<=n;l++)
+        int size = size_dis(gen) ; 
+        vector<int> i_in(size+1), j_in(size+1) ; 
+
+        vector<int> v(n) ; 
+        for(int i=0;i<n;i++) v[i] = i+1 ; 
+
+        shuffle(v.begin(), v.end(), gen) ; 
+        for(int i=0;i<size+1;i++) i_in[i] = v[i] ; 
+
+        shuffle(v.begin(), v.end(), gen) ; 
+        for(int i=0;i<size+1;i++) j_in[i] = v[i] ;
+
+        /* cout << "I index and K " ; 
+        for(int i : i_in) cout << i << " "  ;
+        cout << endl ; 
+        cout << "J index and L " ; 
+        for(int i : j_in) cout << i << " " ; 
+        cout << endl ; 
+        cout << "Before before " << fitness(prob, i_in, j_in, 1, 0)  << endl ;   */
+        if(fitness(prob, i_in, j_in, 1, 0) < -0.1){i-- ; continue ;}
+        cout << "Before " << fitness(prob, i_in, j_in, 1, 0)  << endl ; 
+        tabu_search(prob, i_in, j_in, size, 1, 0) ; 
+        cout << "After " << fitness(prob, i_in, j_in, 1, 0) << endl << endl << endl ;
+
+        if(fitness(prob, i_in, j_in, 1, 0 ) > 0)
         {
-            //cout << k << " " << l << " " << endl ; 
-            vector<pair<double, pair<int, int>>> lst ; 
-            
-            for(int i=1;i<=n;i++)
-                for(int j=1;j<=n;j++) lst.push_back({prob.vars[oneIndex(i,j,k,l)], {i,j}}) ; 
+            cuts++ ; 
+            GRBLinExpr exp ; 
+            double pos=1.0, neg=-1.0 ; 
 
-            sort(lst.begin(), lst.end(), greater<>()) ;
-
-            /* bool itaken[n+1], jtaken[n+1] ; 
-
-            for(int i=0;i<=n;i++) itaken[i] = 0, jtaken[i] = 0 ; 
-            itaken[k] = 1, jtaken[l] = 1 ; 
-
-            vector<int> ivec, jvec ; 
-
-            for(auto i : lst)
+            exp.addTerms(&neg, &vars[oneIndex(i_in[size-1], j_in[size-1], i_in[size-1], j_in[size-1])], 1) ; 
+            for(int i=0;i<size-1;i++)
             {
-                if(ivec.size() > m-1 && jvec.size() > m-1) break ; 
-                if(!itaken[i.second.first] && !jtaken[i.second.second])
+                exp.addTerms(&pos, &vars[oneIndex(i_in[i], j_in[i], i_in[size-1], j_in[size-1])], 1) ; 
+
+                for(int j=0;j<size-1;j++)
                 {
-                    ivec.push_back(i.second.first) ; 
-                    jvec.push_back(i.second.second) ; 
-                }
-            }   */
-
-            for(int a=0;a<n;a++)
-            {
-                if(lst[a].second.first ==k || lst[a].second.second ==l ) continue ; 
-                for(int b=0;b<n;b++)
-                {
-                    if(lst[b].second.first ==k || lst[b].second.second ==l || lst[a].second.first == lst[b].second.first || lst[a].second.second == lst[b].second.second) continue ; 
-                    for(int c=0;c<n;c++)
-                    {
-                        if(lst[c].second.first ==k || lst[c].second.second ==l || lst[c].second.first == lst[b].second.first || lst[c].second.second == lst[b].second.second || lst[a].second.first == lst[c].second.first || lst[a].second.second == lst[c].second.second) continue ; 
-
-                        vector<int> ivec, jvec ; 
-                        ivec.push_back(lst[a].second.first) ; 
-                        ivec.push_back(lst[b].second.first) ;
-                        ivec.push_back(lst[c].second.first) ;
-
-                        jvec.push_back(lst[a].second.second) ; 
-                        jvec.push_back(lst[b].second.second) ;
-                        jvec.push_back(lst[c].second.second) ;
-
-                        GRBLinExpr exp ; 
-                        double first = 0.0, third = 0.0 ; 
-                        double tmp1 =1.0, tmp2 = -1.0 ; 
-                        for(int i=0;i<m;i++)
-                        { 
-                            first += prob.vars[oneIndex(ivec[i], jvec[i], k,l)] ;
-                            exp.addTerms(&tmp1, &vars[oneIndex(ivec[i], jvec[i], k, l)], 1) ;  
-                            for(int j=0;j<i;j++){ 
-                                third += prob.vars[oneIndex(ivec[j], jvec[j], ivec[i], jvec[i])] ; 
-                                exp.addTerms(&tmp2, &vars[oneIndex(ivec[j], jvec[j], ivec[i], jvec[i])], 1) ; 
-                            }
-                        }
-
-                        double sum = first - prob.vars[oneIndex(k, l, k,l)] - third ; 
-                        exp.addTerms(&tmp2, &vars[oneIndex(k,l,k,l)], 1) ; 
-
-                        if(sum > 0.05)
-                        {
-                            prob.model.addConstr(exp, GRB_LESS_EQUAL, 0.0) ;
-                            //cout << sum << endl ; 
-                            cuts++ ;  
-                        }
-                    }
-
-                    vector<int> ivec, jvec ; 
-                    ivec.push_back(lst[a].second.first) ; 
-                    ivec.push_back(lst[b].second.first) ; 
-
-                    jvec.push_back(lst[a].second.second) ; 
-                    jvec.push_back(lst[b].second.second) ;
-
-                    GRBLinExpr exp ; 
-                    double val = 0.0, tmp1=1.0, tmp2=-1.0 ; 
-                    for(int i=0;i<2;i++)
-                    {
-                        val += prob.vars[oneIndex(ivec[i], jvec[i], k, l)] ; 
-                        exp.addTerms(&tmp1, &vars[oneIndex(ivec[i], jvec[i], k, l)], 1) ; 
-                    } 
-
-                    val+= prob.vars[oneIndex(ivec[0], jvec[1], k, l)] - prob.vars[oneIndex(k, l, k, l)] - prob.vars[oneIndex(ivec[1], jvec[1], ivec[0], jvec[0])] ; 
-                    exp.addTerms(&tmp1, &vars[oneIndex(ivec[0], jvec[1], k, l)], 1) ; 
-                    exp.addTerms(&tmp2, &vars[oneIndex(k, l, k, l)], 1) ; 
-                    exp.addTerms(&tmp2, &vars[oneIndex(ivec[1], jvec[1], ivec[0], jvec[0])], 1) ; 
-                    
-                    if(val > 0.05)
-                    {
-                        prob.model.addConstr(exp, GRB_LESS_EQUAL, 0) ; 
-                        cuts++ ; 
-                    }
-
-
+                    if(j<=i) continue ; 
+                    exp.addTerms(&pos, &vars[oneIndex(i_in[i], j_in[i], i_in[j], j_in[j])], 1) ; 
                 }
             }
-
-            /* GRBLinExpr exp ; 
-            double first = 0.0, third = 0.0 ; 
-            double tmp1 =1.0, tmp2 = -1.0 ; 
-            for(int i=0;i<m;i++)
-            { 
-                first += prob.vars[oneIndex(ivec[i], jvec[i], k,l)] ;
-                exp.addTerms(&tmp1, &vars[oneIndex(ivec[i], jvec[i], k, l)], 1) ;  
-                for(int j=0;j<i;j++){ 
-                    third += prob.vars[oneIndex(ivec[j], jvec[j], ivec[i], jvec[i])] ; 
-                    exp.addTerms(&tmp2, &vars[oneIndex(ivec[j], jvec[j], ivec[i], jvec[i])], 1) ; 
-                }
-            }
-
-            double sum = first - prob.vars[oneIndex(k, l, k,l)] - third ; 
-            exp.addTerms(&tmp2, &vars[oneIndex(k,l,k,l)], 1) ; 
-
-            if(sum > 0.05)
-            {
-                prob.model.addConstr(exp, GRB_LESS_EQUAL, 0.0) ;
-                cout << "K: " << k << " L: " << l << " " ; 
-                cout << "I: "  ; 
-                for(int i : ivec) cout << i << " " ;
-                cout << "J: " ;  
-                for(int j : jvec) cout << j << " " ;
-                cout << sum << endl << endl  ;  
-                //cout << sum << endl ; 
-                cuts++ ;  
-            } */
+            prob.model.addConstr(exp, GRB_LESS_EQUAL, 0) ; 
         }
-    } }
 
-    cout << "Cuts Added : " << cuts << endl; 
-    return  ; 
+    }
+    cout << "Cuts " << cuts << endl ; 
 }
-
 
 /* Branch and bound method */
 void branchAndBound(lpProblem& prob)
@@ -599,7 +441,7 @@ void branchAndBound(lpProblem& prob)
     int it = 0 ;  
     while(!q.empty())
     {
-        if(it >0 ) break ; 
+        if(it >5 ) break ; 
         it++ ; 
         cout << it << " Global Upper Bound : " << globalUpperBound << endl ;  
 
@@ -608,9 +450,6 @@ void branchAndBound(lpProblem& prob)
 
         cout << "Before adding cuts : " << q.front().lowerBound << " " << q.front().upperBound << endl ; 
 
-
-        if(it > 0 ) break;
-
         globalUpperBound = min(globalUpperBound, q.front().upperBound)  ;
         
         // Checking before adding cuts  
@@ -618,7 +457,7 @@ void branchAndBound(lpProblem& prob)
 
         expected_gap = q.front().lowerBound/globalUpperBound ; 
         //  Cutting 
-        for(int i=1;i<=4;i++){
+        for(int i=1;i<=1;i++){
             if(i & 1 && expected_gap < 0.975) box1cuts(q.front()) ; 
             else qap2(q.front()) ;  
 
@@ -685,7 +524,17 @@ int main(int argc, char* argv[])
 
     readCoeff(argv[2]) ; 
     lpProblem prob = initialize(argv[1]) ; 
-    branchAndBound(prob) ; 
+    //branchAndBound(prob) ;
+
+    for(int i=0;i<1;i++)
+    {
+        cout << "Iteration " << i << endl ; 
+        if(!i) lpRelaxation(prob) ; 
+        cout << "Solution " << prob.lowerBound << endl ; 
+        box1cuts(prob);
+        lpRelaxation(prob) ;   
+        cout << "Solution after adding cuts " << prob.lowerBound << endl << endl << endl ;
+    } 
 
     auto end = chrono::steady_clock::now() ; 
     cout << "Time Taken :  " << (double) chrono::duration<double, milli>(end - start).count()/60000 << "min" << endl ; 

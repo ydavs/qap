@@ -2,6 +2,7 @@
 
 #include "main.h"
 
+
 /* Helper Functions */
 bool double_equal(double a, double b)
 {
@@ -283,9 +284,11 @@ void tabu_search(lpProblem &prob, vector<int> &p, vector<int> &q,  int psize, in
     vector<int> best_candidate = p ;
     list<vector<int>> tabulist ; 
     tabulist.push_back(p) ; 
-    int it = 0, max_tabu_size=10 ; 
+    int it = 0, max_tabu_size=20, num_iteration=40 ; 
 
-    while(it < 20) 
+    //if(cut) num_iteration = 5 ; 
+
+    while(it < num_iteration) 
     {
         it++ ; 
         list<vector<int>> neighbours ;  
@@ -307,7 +310,7 @@ void tabu_search(lpProblem &prob, vector<int> &p, vector<int> &q,  int psize, in
 
 /* Cutting Procedures */
 /* Kaibel Box 1 Cuts */
-void box1cuts(lpProblem& prob)
+void box1cuts(lpProblem& prob, int beta)
 {
     random_device rd ; 
     mt19937 gen(rd()) ; 
@@ -315,120 +318,96 @@ void box1cuts(lpProblem& prob)
     uniform_int_distribution<> qdis(3, n-5) ; 
 
     GRBVar* vars = prob.model.getVars() ; 
-    int cuts = 0, cnt_limit = 100, beta=2 ; 
+    int cuts = 0, cnt_limit = 3000, i=0 ;
+    double limit=1.0 ;  
 
-    for(int i=0;i<cnt_limit;i++)
+    if(beta==3) limit=3.0 ; 
+
+    omp_set_num_threads(omp_get_max_threads()) ; 
+    #pragma omp parallel
     {
-        vector<int> p, q ; 
-        vector<int> v(n) ;
-        for(int i=0;i<n;i++) v[i] = i+1 ; 
+        while(i<cnt_limit)
+        {   
+            i++ ; 
+            vector<int> p, q ; 
+            vector<int> v(n) ;
+            for(int i=0;i<n;i++) v[i] = i+1 ; 
 
-        /* Initial random q  */
-        shuffle(v.begin(), v.end(), rd) ; 
-        int qsize = qdis(gen) ; 
-        for(int i=0;i<qsize;i++) q.push_back(v[i]) ;
+            /* Initial random q  */
+            shuffle(v.begin(), v.end(), rd) ; 
+            int qsize = qdis(gen) ; 
+            for(int i=0;i<qsize;i++) q.push_back(v[i]) ;
 
-        /* Initial random p */
-        shuffle(v.begin(), v.end(), rd) ; 
-        int psize = qdis(gen) ;  /* For now, make it a constant */
-        for(int i=0;i<psize;i++) p.push_back(v[i]) ; 
-
-        if(psize + qsize > n-3+beta){i--; continue ; }
-        /* cout << "P " ; 
-        for(int i : p) cout << i << " " ; 
-        cout << endl ;  */ 
-        /* tabu search for approximately optimal solution */
-        if(fitness(prob, p, q, 0, beta) < 0.6) { i--; continue ;}
-        //if(beta==3 && fitness(prob, p, q, 0, beta) < 2.5) {i--; continue; }
-        cout << "Before " << fitness(prob, p, q, 0, beta) << endl  ; 
-        tabu_search(prob, p,q, psize, 0, beta) ; 
-        cout << "After " << fitness(prob, p, q, 0, beta) << endl << endl ; 
-        /* Check limit  */
-        if(fitness(prob, p, q, 0, beta) > (double) (beta)*(beta-1)/2)
-        {
-            cuts++ ; 
-            GRBLinExpr exp ; 
-            double pos=1.0, neg=-1.0 ; 
-            for(int i : p)
+            /* Initial random p */
+            shuffle(v.begin(), v.end(), rd) ; 
+            int psize = qdis(gen) ;  /* For now, make it a constant */
+            for(int i=0;i<psize;i++) p.push_back(v[i]) ; 
+ 
+            if(psize + qsize > n-3+beta){i--; continue ; }
+            /* cout << "P " ; 
+            for(int i : p) cout << i << " " ; 
+            cout << endl ;  */ 
+            /* tabu search for approximately optimal solution */
+            if(beta==2 && fitness(prob, p, q, 0, beta) < 0.6) { i--; continue ;}
+            if(beta==3 && fitness(prob, p, q, 0, beta) < 2.5) {i--; continue; }
+            //cout << "Before " << fitness(prob, p, q, 0, beta) << endl  ; 
+            tabu_search(prob, p,q, psize, 0, beta) ; 
+            //cout << "After " << fitness(prob, p, q, 0, beta) << endl << endl ; 
+            /* Check limit  */
+            if(fitness(prob, p, q, 0, beta) > limit)
             {
-                for(int j : q)
+                cuts++ ; 
+                GRBLinExpr exp ; 
+                double pos= (double) beta-1, neg=-1.0 ; 
+                for(int i : p)
                 {
-                    exp.addTerms(&pos, &vars[oneIndex(i,j,i,j)], 1) ; 
-
-                    for(int k : p)
+                    for(int j : q)
                     {
-                        if(i>=k) continue ; 
-                        for(int l : q) exp.addTerms(&neg, &vars[oneIndex(i,j,k,l)], 1) ; 
+                        exp.addTerms(&pos, &vars[oneIndex(i,j,i,j)], 1) ; 
+
+                        for(int k : p)
+                        {
+                            if(i>=k) continue ; 
+                            for(int l : q) exp.addTerms(&neg, &vars[oneIndex(i,j,k,l)], 1) ; 
+                        }   
                     }
                 }
-            }
 
-            prob.model.addConstr(exp, GRB_LESS_EQUAL, 1) ; 
-        } 
+                prob.model.addConstr(exp, GRB_LESS_EQUAL, limit) ; 
+            } 
+        }
     }
-        cout << cuts << endl ; 
+    cout << cuts << endl ; 
     delete vars ; 
 }
-
 
 /* QAP2 Cuts */
 void qap2(lpProblem& prob)
 {
-    random_device rd ; 
-    mt19937 gen(rd()) ; 
-    uniform_int_distribution<> size_dis(3, n-2) ; 
-    
-    int cuts=0, cnt_limit=2000 ; 
+    int cuts = 0 ; 
     GRBVar* vars = prob.model.getVars() ; 
 
-    for(int i=0;i<cnt_limit;i++)
+    for(int k=1;k<=n;k++)
     {
-        int size = size_dis(gen) ; 
-        vector<int> i_in(size+1), j_in(size+1) ; 
-
-        vector<int> v(n) ; 
-        for(int i=0;i<n;i++) v[i] = i+1 ; 
-
-        shuffle(v.begin(), v.end(), gen) ; 
-        for(int i=0;i<size+1;i++) i_in[i] = v[i] ; 
-
-        shuffle(v.begin(), v.end(), gen) ; 
-        for(int i=0;i<size+1;i++) j_in[i] = v[i] ;
-
-        /* cout << "I index and K " ; 
-        for(int i : i_in) cout << i << " "  ;
-        cout << endl ; 
-        cout << "J index and L " ; 
-        for(int i : j_in) cout << i << " " ; 
-        cout << endl ; 
-        cout << "Before before " << fitness(prob, i_in, j_in, 1, 0)  << endl ;   */
-        if(fitness(prob, i_in, j_in, 1, 0) < -0.1){i-- ; continue ;}
-        cout << "Before " << fitness(prob, i_in, j_in, 1, 0)  << endl ; 
-        tabu_search(prob, i_in, j_in, size, 1, 0) ; 
-        cout << "After " << fitness(prob, i_in, j_in, 1, 0) << endl << endl << endl ;
-
-        if(fitness(prob, i_in, j_in, 1, 0 ) > 0)
+        for(int l=1;l<=n;l++)
         {
-            cuts++ ; 
-            GRBLinExpr exp ; 
-            double pos=1.0, neg=-1.0 ; 
-
-            exp.addTerms(&neg, &vars[oneIndex(i_in[size-1], j_in[size-1], i_in[size-1], j_in[size-1])], 1) ; 
-            for(int i=0;i<size-1;i++)
+            for(int m=3;m<=3;m++)
             {
-                exp.addTerms(&pos, &vars[oneIndex(i_in[i], j_in[i], i_in[size-1], j_in[size-1])], 1) ; 
+                vector<pair<double, pair<int, int>>> lst;
 
-                for(int j=0;j<size-1;j++)
-                {
-                    if(j<=i) continue ; 
-                    exp.addTerms(&pos, &vars[oneIndex(i_in[i], j_in[i], i_in[j], j_in[j])], 1) ; 
-                }
+                for(int i=1;i<=n;i++)
+                    for(int j=1;j<=n;j++) lst.push_back({prob.vars[oneIndex(i,j,k,l)], {i,j}}) ; 
+                
+                sort(lst.begin(), lst.end(), greater<>()) ;
+            
+
             }
-            prob.model.addConstr(exp, GRB_LESS_EQUAL, 0) ; 
         }
-
     }
-    cout << "Cuts " << cuts << endl ; 
+
+    cout << "Cuts Added : " << cuts << endl;
+    delete vars ;  
+    return  ; 
 }
 
 /* Branch and bound method */
@@ -457,7 +436,7 @@ void branchAndBound(lpProblem& prob)
 
         expected_gap = q.front().lowerBound/globalUpperBound ; 
         //  Cutting 
-        for(int i=1;i<=1;i++){
+        /* for(int i=1;i<=1;i++){
             if(i & 1 && expected_gap < 0.975) box1cuts(q.front()) ; 
             else qap2(q.front()) ;  
 
@@ -467,7 +446,7 @@ void branchAndBound(lpProblem& prob)
             findUpperBound(q.front()) ; 
 
             globalUpperBound = min(globalUpperBound, q.front().upperBound)  ;
-        }
+        } */
 
         // Checking again after adding cuts  
         if(q.front().lowerBound >= globalUpperBound || double_equal(q.front().lowerBound, q.front().upperBound)){ q.pop() ; continue ; }
@@ -525,8 +504,54 @@ int main(int argc, char* argv[])
     readCoeff(argv[2]) ; 
     lpProblem prob = initialize(argv[1]) ; 
     //branchAndBound(prob) ;
-
-    for(int i=0;i<1;i++)
+    lpRelaxation(prob) ; 
+    double last = 0.0, current = prob.lowerBound; 
+    int i = 1 ; 
+    cout <<"Initial Solution : " << current << endl ;
+    cout << "Number of threads availabe " << omp_get_max_threads() << endl ; 
+    while(abs(last - current)>0.1)
+    {
+        auto t_start = chrono::steady_clock::now() ; 
+        cout << "Iteration : " << i << endl ; 
+        qap2(prob) ; 
+        last = current ;
+        auto t_end = chrono::steady_clock::now() ; 
+        lpRelaxation(prob) ; 
+        current = prob.lowerBound ; 
+        cout << "Solution " << current << endl ;
+        cout << "Time Taken to find cuts :  " << (double) chrono::duration<double, milli>(t_end - t_start).count()/60000 << "min" << endl << endl ; 
+        i++ ; 
+    }
+    last = 0.0, i=1 ; 
+    /* while(abs(last -current)>0.1)
+    {
+        auto t_start = chrono::steady_clock::now() ; 
+        cout << "Iteration : " << i << endl ; 
+        box1cuts(prob, 2) ;
+        last = current ;  
+        auto t_end = chrono::steady_clock::now() ; 
+        lpRelaxation(prob) ; 
+        current = prob.lowerBound ; 
+        cout << "Solution " << current << endl ;
+        cout << "Time Taken to find cuts :  " << (double) chrono::duration<double, milli>(t_end - t_start).count()/60000 << "min" << endl << endl ; 
+        i++ ;  
+    } 
+    last = 0.0, i=1;  
+    while(abs(last-current)>0.1)
+    {
+        auto t_start = chrono::steady_clock::now() ; 
+        cout << "Iteration : " << i << endl ; 
+        box1cuts(prob, 3) ; 
+        last = current ; 
+        auto t_end = chrono::steady_clock::now() ; 
+        lpRelaxation(prob) ; 
+        current = prob.lowerBound ; 
+        cout << "Solution " << current << endl;
+        cout << "Time Taken to find cuts :  " << (double) chrono::duration<double, milli>(t_end - t_start).count()/60000 << "min" << endl << endl ; 
+        i++ ; 
+    }  
+ */
+    /* for(int i=0;i<10;i++)
     {
         cout << "Iteration " << i << endl ; 
         if(!i) lpRelaxation(prob) ; 
@@ -534,7 +559,7 @@ int main(int argc, char* argv[])
         box1cuts(prob);
         lpRelaxation(prob) ;   
         cout << "Solution after adding cuts " << prob.lowerBound << endl << endl << endl ;
-    } 
+    } */ 
 
     auto end = chrono::steady_clock::now() ; 
     cout << "Time Taken :  " << (double) chrono::duration<double, milli>(end - start).count()/60000 << "min" << endl ; 

@@ -20,12 +20,19 @@ using namespace std ;
 
 /* Declaring Global Variables */
 GRBEnv env = GRBEnv() ; 
+<<<<<<< HEAD:code/main.h
 static const int n = 20 ; 
 static const int max_tabu_size = 5; 
 static const int num_iteration = 10 ; 
 double coeff[n][n] ; 
 static const double epsilon = 0.00001; 
 static double globalUpperBound = 1732; 
+=======
+static const int n = 14 ; 
+double coeff[n][n] ; 
+static const double epsilon = 0.00001; 
+static double globalUpperBound = 756980; 
+>>>>>>> main:main.h
 int a[n][n] ; 
 int b[n][n] ; 
 
